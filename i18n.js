@@ -1,5 +1,16 @@
 // Interface translation only. Customer reviews, replies and source notes remain verbatim.
 const TRANSLATIONS = {
+  '워크시트 연결 · 담당자 처리상태 공동 저장': ['Workbook connected · shared staff completion','表格关联 · 共享负责人处理状态','シート連携 · 担当者の対応状態を共有'],
+  '담당자 처리완료': ['Handled by staff','负责人已处理','担当者対応済み'],
+  '담당자 처리완료 · 해제하면 되돌리기': ['Handled by staff · uncheck to undo','负责人已处理 · 取消勾选可撤销','担当者対応済み · チェックを外すと元に戻ります'],
+  '완료 체크는 모두에게 공유됩니다. 실제 답글 게시 여부와는 별개입니다.': ['Completion is shared with everyone. It does not verify that a reply was published.','完成状态会同步给所有人，但不代表已确认回复发布。','完了状態は全員に共有されます。返信の公開確認とは別です。'],
+  '담당자 처리완료 기능 연결 준비 중입니다.': ['Shared completion is being set up.','正在配置共享处理状态。','対応完了機能を接続準備中です。'],
+  '처리상태 연결 실패 — 마지막 확인 상태입니다. 저장은 잠시 사용할 수 없습니다.': ['Status unavailable — showing the last verified state. Saving is temporarily disabled.','处理状态连接失败，显示最后确认的状态。暂时无法保存。','状態に接続できません。最終確認時点を表示中です。保存は一時的に無効です。'],
+  '시트 저장 확인 중…': ['Confirming sheet save…','正在确认表格保存…','シートへの保存を確認中…'],
+  '시트 저장 완료 — 다른 담당자 화면에도 갱신 시 반영됩니다.': ['Saved to the sheet — others will see it on refresh.','已保存到表格，其他负责人刷新后即可看到。','シートに保存しました。他の担当者にも更新時に反映されます。'],
+  '다른 담당자가 먼저 변경했습니다. 최신 상태를 확인해 주세요.': ['Another staff member changed this first. Please review the latest state.','其他负责人已先修改，请查看最新状态。','他の担当者が先に変更しました。最新の状態を確認してください。'],
+  '저장 결과를 확인하지 못했습니다. 새로고침 후 처리상태를 확인해 주세요.': ['Save could not be confirmed. Refresh and check the status.','无法确认保存结果。请刷新并检查处理状态。','保存結果を確認できませんでした。更新して状態を確認してください。'],
+  '통계는 원본 답글 기록 기준입니다. 담당자 처리완료 체크는 답글 게시 수에 포함되지 않습니다.': ['Analytics use original reply records. Staff completion checks do not count as published replies.','统计基于原始回复记录。负责人完成勾选不计入已发布回复数。','統計は元の返信記録に基づきます。担当者の完了チェックは公開返信数に含めません。'],
   '업무 바로가기': ['Work shortcuts', '工作快捷入口', '業務ショートカット'],
   '플랫폼 바로가기': ['Platform shortcuts', '平台快捷入口', 'プラットフォームを開く'],
   '플랫폼 열기': ['Open platform', '打开平台', 'プラットフォームを開く'],
@@ -126,14 +137,15 @@ const PLATFORM_TRANSLATIONS = {
   '강남언니 Q&A': ['Gangnam Unni Q&A', '江南姐姐问答', 'カンナムオンニQ&A'],
 };
 let language = 'ko';
-try { const saved = localStorage.getItem('review-ops-language'); if (['ko', 'en', 'zh', 'ja'].includes(saved)) language = saved; } catch (_) {}
-const localeForLanguage = () => ({ ko: 'ko-KR', en: 'en-US', zh: 'zh-CN', ja: 'ja-JP' })[language];
+try { const saved = localStorage.getItem('review-ops-language'); if (['ko', 'en', 'zh', 'ja','th'].includes(saved)) language = saved; } catch (_) {}
+const localeForLanguage = () => ({ ko: 'ko-KR', en: 'en-US', zh: 'zh-CN', ja: 'ja-JP', th:'th-TH-u-ca-gregory' })[language];
 function t(key, values = {}) {
   const index = ['en', 'zh', 'ja'].indexOf(language);
-  let result = index < 0 ? key : (TRANSLATIONS[key]?.[index] ?? key);
+  let result = language === 'th' ? (THAI[key] ?? key) : index < 0 ? key : (TRANSLATIONS[key]?.[index] ?? key);
   return result.replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? `{${name}}`));
 }
 function platformName(value) {
+  if (language === 'th') return THAI_PLATFORMS[value] ?? value;
   const index = ['en', 'zh', 'ja'].indexOf(language);
   return index < 0 ? value : (PLATFORM_TRANSLATIONS[value]?.[index] ?? value);
 }

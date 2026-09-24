@@ -223,17 +223,22 @@ function loadSheet(sheet) {
       else resolve(result);
     }
 
-    window[callback] = (response) => {
+    window[callback] = async (response) => {
       if (response?.status !== "ok" || !response.table) {
         finish(new Error(response?.errors?.[0]?.message || "시트 응답 오류"));
         return;
       }
-      const normalized = response.table.rows
+      const rawRows = response.table.rows
         .map((row, index) => ({ values: toValues(row), rowIndex: index + 1 }))
-        .filter(({ values }) => values.some(Boolean) && !isHeaderRow(values))
-        .map(({ values, rowIndex }) => sheet.kind === "review" ? normalizeReviewRow(sheet, values, rowIndex) : normalizeInquiryRow(sheet, values, rowIndex))
-        .filter(Boolean);
-      finish(null, normalized);
+        .filter(({ values }) => values.some(Boolean) && !isHeaderRow(values));
+      try {
+        const normalized = await Promise.all(rawRows.map(async ({values,rowIndex}) => {
+          const record = sheet.kind === 'review' ? normalizeReviewRow(sheet,values,rowIndex) : normalizeInquiryRow(sheet,values,rowIndex);
+          if (record) record.completionKey = await completionIdentity(sheet.gid,sheet.kind,values);
+          return record;
+        }));
+        finish(null, normalized.filter(Boolean));
+      } catch (error) { finish(error); }
     };
 
     script.onerror = () => finish(new Error("시트 연결 실패"));
@@ -265,8 +270,9 @@ function updateRefreshButton() {
 }
 
 async function refreshData() {
-  if (state.isLoading || Date.now() < refreshAllowedAt) return;
+  if (state.isLoading || completionStore.saving || Date.now() < refreshAllowedAt) return;
   setLoading(true);
+  await loadCompletionState();
   const results = await Promise.allSettled(SHEETS.map(loadSheet));
   const records = [];
   const failures = [];
@@ -276,7 +282,8 @@ async function refreshData() {
   });
 
   state.failures = failures;
-  if (records.length) state.allRecords = deduplicateRecords(records);
+  const failedGids = new Set(results.flatMap((result,index) => result.status === 'rejected' ? [SHEETS[index].gid] : []));
+  state.allRecords = deduplicateRecords([...records,...state.allRecords.filter(record => failedGids.has(record.sourceGid))]);
   const now = new Date();
   const loadedCount = results.filter((result) => result.status === "fulfilled").length;
   lastLoadedCount = loadedCount;
@@ -326,7 +333,9 @@ function filteredRecords() {
   const search = state.search.toLowerCase();
   return periodRecords().filter((record) => {
     if (state.platform !== "all" && record.platform !== state.platform) return false;
-    if (state.status !== "all" && record.status !== state.status) return false;
+    if (state.status === 'resolved' && !isResolved(record)) return false;
+    if (state.status !== "all" && state.status !== 'resolved' && record.status !== state.status) return false;
+    if (['hold','pending'].includes(state.status) && isResolved(record)) return false;
     if (!search) return true;
     return [record.id, record.procedure, record.body, record.reply, record.reason, record.statusRaw]
       .join(" ")
@@ -359,11 +368,12 @@ function render() {
   elements.totalNote.textContent = t("{period} · 현재 필터 기준", {period: periodLabel()});
   elements.completed.textContent = formatNumber(counts.completed);
   elements.completedNote.textContent = t("완료율 {rate}%", {rate: completionRate});
-  elements.hold.textContent = formatNumber(counts.hold);
-  elements.pending.textContent = formatNumber(counts.pending);
+  elements.hold.textContent = formatNumber(records.filter(r => r.status === 'hold' && !isResolved(r)).length);
+  elements.pending.textContent = formatNumber(records.filter(r => r.status === 'pending' && !isResolved(r)).length);
   elements.analyticsPeriod.textContent = t("{period} 기준", {period: periodLabel()});
 
-  renderHolds(records.filter((record) => record.status === "hold"));
+  renderCompletionNotice();
+  renderHolds(records.filter((record) => record.status === "hold" && !isResolved(record)));
   renderTable(records);
   renderPlatformChart(records);
   renderDonut(counts, records.length);
@@ -421,7 +431,7 @@ function renderTable(records) {
         <span class="content-text" title="${escapeHtml(record.body)}">${escapeHtml(record.body || t("내용 미기록"))}</span>
       </td>
       <td class="content-cell" data-label="${t("게시 답글")}"><span class="content-text">${escapeHtml(record.status === "hold" ? staffReason(record) : record.reply || t("답글 미기록"))}</span></td>
-      <td data-label="${t("상태")}"><span class="status-chip status-${record.status}">${statusLabel(record.status)}</span></td>
+      <td data-label="${t("상태")}"><span class="status-chip status-${isResolved(record) ? 'resolved' : record.status}">${isResolved(record) ? t('담당자 처리완료') : statusLabel(record.status)}</span></td>
     </tr>
   `).join("");
 }
@@ -451,7 +461,7 @@ function sheetRowUrl(record) {
 
 function recordActions(record) {
   const sheet = SHEETS.find((item) => item.gid === record.sourceGid);
-  return `<div class="record-actions"><a href="${sheet.url}" target="_blank" rel="noopener noreferrer">${t("플랫폼 열기")} ↗</a><a href="${sheetRowUrl(record)}" target="_blank" rel="noopener noreferrer">${t("시트 기록 열기")} ↗</a></div>`;
+  return `<div class="record-actions"><a href="${sheet.url}" target="_blank" rel="noopener noreferrer">${t("플랫폼 열기")} ↗</a><a href="${sheetRowUrl(record)}" target="_blank" rel="noopener noreferrer">${t("시트 기록 열기")} ↗</a></div>${completionControl(record)}`;
 }
 
 function renderQuickLinks() {

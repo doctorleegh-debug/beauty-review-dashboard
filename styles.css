@@ -487,3 +487,9 @@ td, .hold-card p, .content-text { font-size: 1rem; line-height: 1.65; }
 @media (max-width: 1020px) and (min-width: 721px) {
   .app-header { align-items: flex-start; flex-direction: column; gap: 1.25rem; }
 }
+:root { --completion-accent: #147967; }
+.completion-control { display:flex; align-items:center; gap:10px; margin-top:12px; font-size:14px; line-height:1.6; cursor:pointer; }
+.completion-control input { width:21px; height:21px; flex-shrink:0; accent-color:var(--completion-accent); }
+.completion-control:has(input:disabled) { opacity:.6; cursor:wait; }
+.completion-notice { padding:14px 18px; border:1px solid var(--border); border-radius:12px; font-size:15px; line-height:1.7; }
+.status-resolved { background:#d7eee6; color:#15604c; }
