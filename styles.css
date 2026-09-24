@@ -502,3 +502,5 @@ td, .hold-card p, .content-text { font-size: 1rem; line-height: 1.65; }
 .completion-control:has(input:disabled) { opacity:.6; cursor:wait; }
 .completion-notice { padding:14px 18px; border:1px solid var(--line); border-radius:12px; font-size:15px; line-height:1.7; }
 .status-resolved { background:#d7eee6; color:#15604c; }
+.completion-tools { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin:12px 0 24px; }
+.completion-tools span { color:var(--muted); font-size:14px; }

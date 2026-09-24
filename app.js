@@ -1,5 +1,4 @@
 const SHEET_ID = "1qcc8B-DCMiTd5d2Gc3jAC0KSxw26qEw4FvsDJYW-Z04";
-const AUTO_REFRESH_MS = 60_000;
 const REFRESH_COOLDOWN_MS = 10_000;
 let refreshAllowedAt = 0;
 let refreshButtonTimer;
@@ -205,25 +204,32 @@ function deduplicateRecords(records) {
   return [...map.values()];
 }
 
-function loadSheet(sheet) {
+function loadSheetAttempt(sheet) {
   return new Promise((resolve, reject) => {
     const callback = `__reviewSheet_${sheet.gid}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const script = document.createElement("script");
-    const timeout = window.setTimeout(() => finish(new Error("응답 시간 초과")), 15_000);
+    let settled = false;
+    const timeout = window.setTimeout(() => finish(new Error("응답 시간 초과")), 30_000);
 
     function cleanup() {
       clearTimeout(timeout);
-      delete window[callback];
+      // A response may arrive after its script was removed on timeout.
+      window[callback] = () => {};
+      window.setTimeout(() => { delete window[callback]; }, 60_000);
       script.remove();
     }
 
     function finish(error, result) {
+      if (settled) return;
+      settled = true;
       cleanup();
       if (error) reject(error);
       else resolve(result);
     }
 
     window[callback] = async (response) => {
+      if (settled) return;
+      clearTimeout(timeout); // Local normalization is not a network timeout.
       if (response?.status !== "ok" || !response.table) {
         finish(new Error(response?.errors?.[0]?.message || "시트 응답 오류"));
         return;
@@ -245,12 +251,37 @@ function loadSheet(sheet) {
     const query = new URLSearchParams({
       gid: sheet.gid,
       headers: "0",
+      range: "A:N", // Preserve source row offsets; exclude unused columns only.
       tqx: `out:json;responseHandler:${callback}`,
       t: String(Date.now()),
     });
     script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?${query}`;
     document.head.append(script);
   });
+}
+
+async function loadSheet(sheet) {
+  try { return await loadSheetAttempt(sheet); }
+  catch (error) {
+    if (!['시트 연결 실패', '응답 시간 초과'].includes(error.message)) throw error;
+    // Retry only the failed request once within this user-requested refresh.
+    await new Promise(resolve => window.setTimeout(resolve, 1000));
+    return loadSheetAttempt(sheet);
+  }
+}
+
+async function loadSheets() {
+  const results = new Array(SHEETS.length);
+  let next = 0;
+  async function worker() {
+    while (next < SHEETS.length) {
+      const index = next++;
+      try { results[index] = {status:'fulfilled', value:await loadSheet(SHEETS[index])}; }
+      catch (reason) { results[index] = {status:'rejected', reason}; }
+    }
+  }
+  await Promise.all([worker(), worker()]);
+  return results;
 }
 
 function setLoading(loading) {
@@ -272,8 +303,10 @@ function updateRefreshButton() {
 async function refreshData() {
   if (state.isLoading || completionStore.saving || Date.now() < refreshAllowedAt) return;
   setLoading(true);
-  await loadCompletionState();
-  const results = await Promise.allSettled(SHEETS.map(loadSheet));
+  if (!completionStore.ready) completionStore.message = '담당자 처리상태 연결 중…';
+  renderCompletionNotice();
+  // Neither service waits for the other before starting its requests.
+  const [results] = await Promise.all([loadSheets(), loadCompletionState()]);
   const records = [];
   const failures = [];
   results.forEach((result, index) => {
@@ -668,4 +701,3 @@ document.querySelector('#language-select').addEventListener('change', (event) =>
 
 renderQuickLinks();
 refreshData();
-window.setInterval(refreshData, AUTO_REFRESH_MS);

@@ -1,5 +1,12 @@
 // Interface translation only. Customer reviews, replies and source notes remain verbatim.
 const TRANSLATIONS = {
+  '마지막 처리 되돌리기': ['Undo last action', '撤销上次操作', '直前の操作を元に戻す'],
+  'Ctrl+Z / ⌘Z · 이 화면에서 저장한 작업만': ['Ctrl+Z / ⌘Z · saved actions in this tab only', 'Ctrl+Z / ⌘Z · 仅限本标签页保存的操作', 'Ctrl+Z / ⌘Z・この画面で保存した操作のみ'],
+  '마지막 처리를 되돌렸습니다. 시트에도 반영되었습니다.': ['Last action undone and saved to the sheet.', '已撤销上次操作并同步到表格。', '直前の操作を元に戻し、シートに保存しました。'],
+  '담당자 처리상태 연결 중…': ['Connecting to shared completion…', '正在连接共享处理状态…', '対応状態に接続中…'],
+  '담당자 처리완료 · 연결 재시도': ['Handled by staff · reconnect', '负责人已处理 · 重试连接', '担当者対応済み・再接続'],
+  '처리상태 연결 실패 — 마지막 확인 상태입니다. 완료 체크를 누르면 연결을 다시 확인합니다.': ['Status unavailable — showing the last verified state. Click a completion checkbox to reconnect.', '处理状态连接失败，显示最后确认的状态。点击完成复选框可重试连接。', '接続できないため最終確認状態を表示しています。完了チェックで再接続します。'],
+  '데이터 갱신: 새로고침 버튼': ['Update data with the Refresh button', '点击刷新按钮更新数据', '更新ボタンでデータを更新'],
   '워크시트 연결 · 담당자 처리상태 공동 저장': ['Workbook connected · shared staff completion','表格关联 · 共享负责人处理状态','シート連携 · 担当者の対応状態を共有'],
   '담당자 처리완료': ['Handled by staff','负责人已处理','担当者対応済み'],
   '담당자 처리완료 · 해제하면 되돌리기': ['Handled by staff · uncheck to undo','负责人已处理 · 取消勾选可撤销','担当者対応済み · チェックを外すと元に戻ります'],
