@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="플랫폼별 리뷰 답글 처리 현황과 통계를 한눈에 확인하는 운영 대시보드" />
+    <meta name="theme-color" content="#101828" />
+    <title>리뷰 운영 대시보드</title>
+    <script>
+      (() => {
+        let saved;
+        try { saved = localStorage.getItem('review-ops-theme'); } catch (_) {}
+        document.documentElement.dataset.theme = saved === 'light' || saved === 'dark'
+          ? saved : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      })();
+    </script>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23101828'/%3E%3Cpath d='M18 18h28v20H31l-9 8v-8h-4z' fill='%23fff'/%3E%3Cpath d='m25 28 5 5 10-11' fill='none' stroke='%235eead4' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">본문으로 건너뛰기</a>
+
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">BEAUTY BLOSSOM · REVIEW OPS</p>
+        <h1>리뷰 운영 대시보드</h1>
+        <p id="top-refreshed" class="top-refreshed" role="status" aria-live="polite">최근 갱신: 데이터 연결 중</p>
+      </div>
+      <div class="header-actions">
+        <label class="language-control"><span aria-hidden="true">◎</span><select id="language-select" aria-label="Language / 언어">
+          <option value="ko">한국어</option><option value="en">English</option><option value="zh">中文</option><option value="ja">日本語</option>
+        </select></label>
+        <button class="button theme-toggle" id="theme-toggle" type="button" aria-label="다크 모드로 전환">
+          <svg class="theme-moon" aria-hidden="true" viewBox="0 0 24 24"><path d="M20 14a8 8 0 0 1-10-10A8 8 0 1 0 20 14Z" /></svg>
+          <svg class="theme-sun" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
+          <span id="theme-label">다크 모드</span>
+        </button>
+        <div class="sync-state" id="sync-state" role="status" aria-live="polite">
+          <span class="sync-dot" aria-hidden="true"></span>
+          <span id="sync-label">시트 연결 중</span>
+        </div>
+        <button class="button button-primary" id="refresh-button" type="button">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v6h-6" /></svg>
+          <span id="refresh-label">새로고침</span>
+        </button>
+      </div>
+    </header>
+
+    <div class="source-strip">
+      <div>
+        <span class="source-label">연결 원본</span>
+        <strong>2026_플랫폼별 리뷰 답글 관리</strong>
+        <span class="source-divider" aria-hidden="true"></span>
+        <span id="last-updated">최종 반영 시간 확인 중</span>
+      </div>
+      <a id="sheet-link" href="https://docs.google.com/spreadsheets/d/1qcc8B-DCMiTd5d2Gc3jAC0KSxw26qEw4FvsDJYW-Z04/edit" target="_blank" rel="noopener noreferrer">
+        원본 시트 열기
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-8 8M19 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" /></svg>
+      </a>
+    </div>
+
+    <nav class="tab-nav" aria-label="대시보드 보기">
+      <button class="tab-button is-active" type="button" role="tab" aria-selected="true" aria-controls="operations-panel" id="operations-tab" data-tab="operations">
+        운영 현황
+      </button>
+      <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="analytics-panel" id="analytics-tab" data-tab="analytics">
+        리뷰 통계
+      </button>
+    </nav>
+
+    <main id="main">
+      <div class="error-banner" id="error-banner" hidden>
+        <strong>일부 시트 데이터를 불러오지 못했습니다.</strong>
+        <span id="error-detail">원본 시트의 공유 설정을 확인한 뒤 다시 시도해 주세요.</span>
+      </div>
+
+      <section class="tab-panel is-active" id="operations-panel" role="tabpanel" aria-labelledby="operations-tab">
+        <div class="filters-card" aria-label="운영 현황 필터">
+          <div class="segmented" aria-label="조회 기간">
+            <button class="period-button" type="button" data-days="7">7일</button>
+            <button class="period-button is-active" type="button" data-days="30">30일</button>
+            <button class="period-button" type="button" data-days="all">전체</button>
+          </div>
+          <label>
+            <span>플랫폼</span>
+            <select id="platform-filter">
+              <option value="all">전체 플랫폼</option>
+            </select>
+          </label>
+          <label>
+            <span>처리 상태</span>
+            <select id="status-filter">
+              <option value="all">전체 상태</option>
+              <option value="completed">답글 완료</option>
+              <option value="hold">AI 답글 보류</option>
+              <option value="pending">확인 필요</option>
+            </select>
+          </label>
+          <label class="search-control">
+            <span>리뷰·답글 검색</span>
+            <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="m16 16 4 4" /></svg>
+            <input id="search-input" type="search" placeholder="시술명, 리뷰 번호, 내용" autocomplete="off" />
+          </label>
+        </div>
+
+        <div class="kpi-grid" aria-label="핵심 운영 지표">
+          <article class="kpi-card kpi-total">
+            <div class="kpi-label">확인된 리뷰·문의</div>
+            <strong id="kpi-total">—</strong>
+            <p id="kpi-total-note">선택 기간 기준</p>
+          </article>
+          <article class="kpi-card kpi-completed">
+            <div class="kpi-label">답글 완료</div>
+            <strong id="kpi-completed">—</strong>
+            <p id="kpi-completed-note">완료율 계산 중</p>
+          </article>
+          <article class="kpi-card kpi-hold">
+            <div class="kpi-label">AI 답글 보류</div>
+            <strong id="kpi-hold">—</strong>
+            <p>담당자 확인이 필요한 건</p>
+          </article>
+          <article class="kpi-card kpi-pending">
+            <div class="kpi-label">확인 필요</div>
+            <strong id="kpi-pending">—</strong>
+            <p>답글 또는 상태가 미확인된 건</p>
+          </article>
+        </div>
+
+        <section class="section-block holds-section" aria-labelledby="holds-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">ACTION REQUIRED</p>
+              <h2 id="holds-title">AI가 답글을 보류한 리뷰</h2>
+              <p class="section-description">답글을 달지 않은 이유를 확인해 주세요.</p>
+            </div>
+            <span class="count-badge" id="hold-count">0건</span>
+          </div>
+          <div class="hold-list" id="hold-list">
+            <div class="loading-row">AI가 답글을 보류한 리뷰를 확인하고 있습니다.</div>
+          </div>
+        </section>
+
+        <section class="section-block" aria-labelledby="activity-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">LATEST ACTIVITY</p>
+              <h2 id="activity-title">최근 리뷰 처리 내역</h2>
+            </div>
+            <span class="table-summary" id="table-summary">불러오는 중</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">일시</th>
+                  <th scope="col">플랫폼</th>
+                  <th scope="col">리뷰·문의</th>
+                  <th scope="col">게시 답글</th>
+                  <th scope="col">상태</th>
+                </tr>
+              </thead>
+              <tbody id="activity-body">
+                <tr><td colspan="5" class="table-empty">워크시트에서 데이터를 불러오고 있습니다.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="tab-panel" id="analytics-panel" role="tabpanel" aria-labelledby="analytics-tab" hidden>
+        <div class="analytics-intro">
+          <div>
+            <p class="section-kicker">REVIEW ANALYTICS</p>
+            <h2>플랫폼별 처리 흐름</h2>
+          </div>
+          <p id="analytics-period">최근 30일 기준</p>
+        </div>
+
+        <div class="analytics-grid analytics-grid-primary">
+          <article class="chart-card chart-card-wide">
+            <div class="chart-heading">
+              <div>
+                <h3>플랫폼별 처리 현황</h3>
+                <p>답글 완료, 보류, 확인 필요 건을 비교합니다.</p>
+              </div>
+              <div class="legend" aria-label="차트 범례">
+                <span><i class="legend-completed"></i>답글 완료</span>
+                <span><i class="legend-hold"></i>AI 답글 보류</span>
+                <span><i class="legend-pending"></i>확인 필요</span>
+              </div>
+            </div>
+            <div class="stacked-chart" id="platform-chart" role="img" aria-label="플랫폼별 답글 처리 현황 막대 차트"></div>
+          </article>
+
+          <article class="chart-card chart-card-donut">
+            <div class="chart-heading">
+              <div>
+                <h3>전체 처리 비율</h3>
+                <p>선택 기간의 상태 분포</p>
+              </div>
+            </div>
+            <div class="donut-layout">
+              <div class="donut-chart" id="status-donut" role="img" aria-label="전체 답글 처리 비율 도넛 차트">
+                <div class="donut-center"><strong>—</strong><span>전체</span></div>
+              </div>
+              <dl class="donut-stats">
+                <div><dt>답글 완료</dt><dd id="donut-completed">—</dd></div>
+                <div><dt>AI 답글 보류</dt><dd id="donut-hold">—</dd></div>
+                <div><dt>확인 필요</dt><dd id="donut-pending">—</dd></div>
+              </dl>
+            </div>
+          </article>
+        </div>
+
+        <div class="analytics-grid">
+          <article class="chart-card chart-card-wide">
+            <div class="chart-heading">
+              <div>
+                <h3>최근 14일 처리 추이</h3>
+                <p>워크시트에 기록된 날짜를 기준으로 집계합니다.</p>
+              </div>
+            </div>
+            <div class="trend-chart" id="trend-chart" role="img" aria-label="최근 14일 리뷰 처리 추이 차트"></div>
+          </article>
+
+          <div class="summary-column">
+          <article class="chart-card" aria-labelledby="reply-metrics-title">
+            <div class="chart-heading">
+              <div><h3 id="reply-metrics-title">누가 답글을 달았나요?</h3><p>현재 선택 조건 · 시트에 기록된 작성 주체 기준</p></div>
+            </div>
+            <dl class="reply-metrics">
+              <div><dt>AI 답글</dt><dd id="metric-ai">—</dd></div>
+              <div><dt>담당자 직접 답글</dt><dd id="metric-human">—</dd></div>
+              <div><dt>저평점 리뷰</dt><dd id="metric-low">—</dd></div>
+              <div><dt>평균 평점</dt><dd id="metric-rating">—</dd></div>
+            </dl>
+            <p id="reply-metrics-note" class="metric-note"></p>
+            <p class="metric-note">저평점: 공개 평점 5점 기준 3.5점 이하. 문의는 평점 집계에서 제외합니다.</p>
+          </article>
+          <article class="chart-card">
+            <div class="chart-heading">
+              <div>
+                <h3>플랫폼 요약</h3>
+                <p>처리량과 완료율을 함께 확인합니다.</p>
+              </div>
+            </div>
+            <div class="platform-summary" id="platform-summary"></div>
+          </article>
+          </div>
+        </div>
+
+        <p class="data-note">통계는 원본 시트에서 식별 가능한 리뷰·문의 행을 기준으로 하며, 점검 요약 행과 중복 리뷰 ID는 제외합니다.</p>
+      </section>
+    </main>
+
+    <footer>
+      <span>워크시트 연결형 읽기 전용 대시보드</span>
+      <span>자동 새로고침 <strong>1분</strong></span>
+    </footer>
+
+    <script src="i18n.js" defer></script>
+    <script src="app.js" defer></script>
+  </body>
+</html>
