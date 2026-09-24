@@ -306,7 +306,8 @@ async function refreshData() {
   if (!completionStore.ready) completionStore.message = '담당자 처리상태 연결 중…';
   renderCompletionNotice();
   // Neither service waits for the other before starting its requests.
-  const [results] = await Promise.all([loadSheets(), loadCompletionState()]);
+  loadCompletionState().then(() => { if (!completionStore.saving) render(); });
+  const results = await loadSheets();
   const records = [];
   const failures = [];
   results.forEach((result, index) => {

@@ -11,24 +11,32 @@ async function completionIdentity(gid, kind, values) {
   return Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2,'0')).join('');
 }
 
-function completionRead(requestId = '') {
-  return new Promise((resolve,reject) => {
-    if (!COMPLETION_ENDPOINT) return reject(new Error('NOT_CONFIGURED'));
-    const callback = '__completion_'+crypto.randomUUID().replaceAll('-','');
-    const script = document.createElement('script');
-    const cleanup = () => {
-      clearTimeout(timer); script.remove(); window[callback] = () => {};
-      setTimeout(() => { delete window[callback]; },60000);
-    };
-    const timer = setTimeout(() => { cleanup(); reject(new Error('TIMEOUT')); },30000);
-    window[callback] = result => { cleanup(); result?.ok ? resolve(result) : reject(new Error('STORAGE_UNAVAILABLE')); };
-    script.onerror = () => { cleanup(); reject(new Error('NETWORK')); };
-    script.src = COMPLETION_ENDPOINT+'?'+new URLSearchParams({callback,requestId,t:String(Date.now())});
-    document.head.append(script);
-  });
+async function completionRead(requestId = '') {
+  if (!COMPLETION_ENDPOINT) throw new Error('NOT_CONFIGURED');
+  // ContentService allows anonymous CORS GET. Avoid script-tag credentials and
+  // stale redirect URLs; read structured data instead of executing JSONP.
+  const query = new URLSearchParams({requestId,t:String(Date.now()),nonce:crypto.randomUUID()});
+  let response;
+  try {
+    response = await fetch(COMPLETION_ENDPOINT+'?'+query,{credentials:'omit',cache:'no-store',signal:AbortSignal.timeout(30000)});
+  } catch (error) {
+    throw new Error(error.name === 'TimeoutError' || error.name === 'AbortError' ? 'TIMEOUT' : 'NETWORK');
+  }
+  if (!response.ok) throw new Error('NETWORK');
+  let result;
+  try { result = await response.json(); } catch (_) { throw new Error('NETWORK'); }
+  if (!result?.ok || !result.states || typeof result.states !== 'object') throw new Error('STORAGE_UNAVAILABLE');
+  return result;
 }
 
-async function loadCompletionState() {
+let completionStateRequest = null;
+function loadCompletionState() {
+  if (completionStateRequest) return completionStateRequest;
+  completionStateRequest = fetchCompletionState().finally(() => { completionStateRequest = null; });
+  return completionStateRequest;
+}
+
+async function fetchCompletionState() {
   try {
     let result;
     try { result = await completionRead(); }
