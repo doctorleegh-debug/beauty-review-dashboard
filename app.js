@@ -7,12 +7,12 @@ let lastRefreshAt = null;
 let lastLoadedCount = 0;
 
 const SHEETS = [
-  { name: "강남언니", gid: "0", kind: "review" },
-  { name: "바비톡", gid: "1136387058", kind: "review" },
-  { name: "여신티켓", gid: "1871126246", kind: "review" },
-  { name: "카카오리뷰", gid: "645159251", kind: "review" },
-  { name: "여신티켓 시술문의", gid: "346527032", kind: "inquiry" },
-  { name: "강남언니 Q&A", gid: "1011610355", kind: "inquiry" },
+  { name: "강남언니", gid: "0", kind: "review", url: "https://partner.gangnamunni.com/review" },
+  { name: "바비톡", gid: "1136387058", kind: "review", url: "https://client.babitalk.com/review" },
+  { name: "여신티켓", gid: "1871126246", kind: "review", url: "https://plus.yeoshin.co.kr/customerManagement/reviewHistory" },
+  { name: "카카오리뷰", gid: "645159251", kind: "review", url: "https://business.kakao.com/space/1027344/mystore/819519/review" },
+  { name: "여신티켓 시술문의", gid: "346527032", kind: "inquiry", url: "https://plus.yeoshin.co.kr/customerManagement/inquiryHistory" },
+  { name: "강남언니 Q&A", gid: "1011610355", kind: "inquiry", url: "https://partner.gangnamunni.com/service-offer/qna" },
 ];
 
 const state = {
@@ -229,9 +229,9 @@ function loadSheet(sheet) {
         return;
       }
       const normalized = response.table.rows
-        .map(toValues)
-        .filter((values) => values.some(Boolean) && !isHeaderRow(values))
-        .map((values, index) => sheet.kind === "review" ? normalizeReviewRow(sheet, values, index + 1) : normalizeInquiryRow(sheet, values, index + 1))
+        .map((row, index) => ({ values: toValues(row), rowIndex: index + 1 }))
+        .filter(({ values }) => values.some(Boolean) && !isHeaderRow(values))
+        .map(({ values, rowIndex }) => sheet.kind === "review" ? normalizeReviewRow(sheet, values, rowIndex) : normalizeInquiryRow(sheet, values, rowIndex))
         .filter(Boolean);
       finish(null, normalized);
     };
@@ -394,14 +394,14 @@ function renderHolds(records) {
     elements.holdList.innerHTML = `<div class="empty-state">${t("선택 조건에 AI가 답글을 보류한 리뷰가 없습니다.")}</div>`;
     return;
   }
-  elements.holdList.innerHTML = records.slice(0, 12).map((record) => `
+  elements.holdList.innerHTML = records.map((record) => `
     <article class="hold-card">
       <div>
         <div class="hold-meta"><span>${escapeHtml(platformName(record.platform))}</span><span>·</span><span>${escapeHtml(displayDate(record))}</span><span>·</span><span>${escapeHtml(record.id)}</span></div>
         <h3>${escapeHtml(record.procedure || t("리뷰·문의"))}</h3>
         <p>${escapeHtml(shorten(record.body || t("원문 내용이 기록되지 않았습니다."), 150))}</p>
       </div>
-      <div class="hold-reason">${escapeHtml(shorten(record.reason || record.statusRaw || t("담당자 확인 필요"), 110))}</div>
+      <div class="hold-action-column"><div class="hold-reason"><strong>${t("담당자 확인 필요")}</strong><p>${escapeHtml(staffReason(record))}</p></div>${recordActions(record)}</div>
     </article>
   `).join("");
 }
@@ -415,15 +415,47 @@ function renderTable(records) {
   elements.activityBody.innerHTML = records.slice(0, 100).map((record) => `
     <tr>
       <td class="date-cell" data-label="${t("일시")}">${escapeHtml(displayDate(record))}</td>
-      <td class="platform-cell" data-label="${t("플랫폼")}">${escapeHtml(platformName(record.platform))}</td>
+      <td class="platform-cell" data-label="${t("플랫폼")}">${escapeHtml(platformName(record.platform))}${recordActions(record)}</td>
       <td class="content-cell" data-label="${t("리뷰·문의")}">
         <span class="content-title">${escapeHtml(record.procedure || `${t("리뷰·문의")} · ${record.id}`)}</span>
         <span class="content-text" title="${escapeHtml(record.body)}">${escapeHtml(record.body || t("내용 미기록"))}</span>
       </td>
-      <td class="content-cell" data-label="${t("게시 답글")}"><span class="content-text" title="${escapeHtml(record.reply)}">${escapeHtml(record.reply || t("답글 미기록"))}</span></td>
+      <td class="content-cell" data-label="${t("게시 답글")}"><span class="content-text">${escapeHtml(record.status === "hold" ? staffReason(record) : record.reply || t("답글 미기록"))}</span></td>
       <td data-label="${t("상태")}"><span class="status-chip status-${record.status}">${statusLabel(record.status)}</span></td>
     </tr>
   `).join("");
+}
+
+// Only source-backed business reasons are shown; internal logs never become staff-facing copy.
+function staffReason(record) {
+  const reason = `${record.reason || ""} ${record.statusRaw || ""}`;
+  const categories = [
+    [/환불|취소.*처리|결제/, "취소·환불 또는 결제 확인이 필요해 AI가 답글을 달지 않았습니다."],
+    [/플랫폼.*보류|사진.*무관|무관.*사진|숨김/, "플랫폼에서 보류·숨김 처리된 내용이라 AI가 답글을 달지 않았습니다."],
+    [/불만|저평점|민원|비대칭/, "불만 사항에 대한 담당자 확인이 필요해 AI가 답글을 달지 않았습니다."],
+    [/부작용|알레르기|통증|붓기|다운타임|회복/, "부작용·통증·회복 관련 확인이 필요해 AI가 답글을 달지 않았습니다."],
+    [/병행|병용|동시.*시술/, "여러 시술을 함께 받는 방법에 대한 확인이 필요해 AI가 답글을 달지 않았습니다."],
+    [/지속|주기|일정|리터치|횟수/, "시술 주기·횟수·효과 지속기간 확인이 필요해 AI가 답글을 달지 않았습니다."],
+    [/가격|금액/, "정확한 가격 확인이 필요해 AI가 답글을 달지 않았습니다."],
+    [/성분|약물|용량|장비|설정|시술 부위/, "시술 정보의 정확한 확인이 필요해 AI가 답글을 달지 않았습니다."],
+    [/주차|운영시간|예약/, "병원 운영·예약 정보 확인이 필요해 AI가 답글을 달지 않았습니다."],
+    [/의료|진단|맞춤|치료/, "의료진의 판단이 필요한 내용이라 AI가 답글을 달지 않았습니다."],
+    [/로그인.*실패|접속.*실패|인증.*필요/, "플랫폼 접속을 확인하지 못해 AI가 답글을 달지 않았습니다."],
+  ];
+  return t(categories.find(([pattern]) => pattern.test(reason))?.[1] || "자동으로 답변하기 어려운 내용으로 분류되어 AI가 답글을 달지 않았습니다. 담당자가 원문을 확인해 주세요.");
+}
+
+function sheetRowUrl(record) {
+  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit#gid=${record.sourceGid}&range=A${record.rowIndex}:N${record.rowIndex}`;
+}
+
+function recordActions(record) {
+  const sheet = SHEETS.find((item) => item.gid === record.sourceGid);
+  return `<div class="record-actions"><a href="${sheet.url}" target="_blank" rel="noopener noreferrer">${t("플랫폼 열기")} ↗</a><a href="${sheetRowUrl(record)}" target="_blank" rel="noopener noreferrer">${t("시트 기록 열기")} ↗</a></div>`;
+}
+
+function renderQuickLinks() {
+  document.querySelector("#platform-links").innerHTML = SHEETS.map((sheet) => `<a href="${sheet.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(platformName(sheet.name))} ↗</a>`).join("");
 }
 
 function platformGroups(records) {
@@ -621,7 +653,9 @@ document.querySelector('#language-select').addEventListener('change', (event) =>
   render();
   renderFreshness();
   updateRefreshButton();
+  renderQuickLinks();
 });
 
+renderQuickLinks();
 refreshData();
 window.setInterval(refreshData, AUTO_REFRESH_MS);
