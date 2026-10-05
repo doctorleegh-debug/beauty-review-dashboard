@@ -54,14 +54,31 @@ const elements = {
   platformSummary: document.querySelector("#platform-summary"),
 };
 
-function cellValue(cell) {
-  if (!cell) return "";
-  const value = cell.f ?? cell.v ?? "";
-  return String(value).trim();
+function toValues(row) {
+  return Array.from({ length: 16 }, (_, index) => String(row[index] ?? "").trim());
 }
 
-function toValues(row) {
-  return Array.from({ length: 16 }, (_, index) => cellValue(row.c?.[index]));
+// RFC 4180: quoted fields may contain commas, doubled quotes and line breaks.
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (quoted) {
+      if (character !== '"') field += character;
+      else if (text[index + 1] === '"') { field += '"'; index += 1; }
+      else quoted = false;
+    } else if (character === '"') quoted = true;
+    else if (character === ",") { row.push(field); field = ""; }
+    else if (character === "\n" || character === "\r") {
+      if (character === "\r" && text[index + 1] === "\n") index += 1;
+      row.push(field); rows.push(row); row = []; field = "";
+    } else field += character;
+  }
+  if (field || row.length) { row.push(field); rows.push(row); }
+  return rows;
 }
 
 function isHeaderRow(values) {
@@ -101,6 +118,11 @@ function parseDate(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+// A free-text note in a date cell (e.g. "시간 미표시") must not hide a usable fallback date.
+function firstDateText(...candidates) {
+  return candidates.find((text) => parseDate(text)) || candidates.find(Boolean) || "";
+}
+
 function reviewStatus(statusText, replyText, notesText, stateText = "") {
   const combined = `${statusText} ${notesText} ${stateText}`.toLowerCase();
   const reply = String(replyText || "").trim();
@@ -136,7 +158,7 @@ function normalizeReviewRow(sheet, values, rowIndex) {
   const author = values[4];
   const reviewDate = normalizeDateText(values[0]);
   const processedAt = normalizeDateText(values[11]);
-  const dateText = reviewDate || processedAt;
+  const dateText = firstDateText(reviewDate, processedAt);
   const body = redactText(values[8], author);
   const reply = redactText(values[9], author);
   const id = values[3];
@@ -174,7 +196,7 @@ function normalizeInquiryRow(sheet, values, rowIndex) {
   const notes = redactText(values[11]);
   if ((!id || /문의 NO\/ID/i.test(id)) && !body) return null;
   const status = reviewStatus(values[9], reply, notes, values[1]);
-  const dateText = inquiryAt || checkedAt || processedAt;
+  const dateText = firstDateText(inquiryAt, checkedAt, processedAt);
   return {
     key: `${sheet.gid}:${id || `${rowIndex}:${body.slice(0, 32)}`}`,
     platform: sheet.name,
@@ -204,60 +226,29 @@ function deduplicateRecords(records) {
   return [...map.values()];
 }
 
-function loadSheetAttempt(sheet) {
-  return new Promise((resolve, reject) => {
-    const callback = `__reviewSheet_${sheet.gid}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const script = document.createElement("script");
-    let settled = false;
-    const timeout = window.setTimeout(() => finish(new Error("응답 시간 초과")), 30_000);
-
-    function cleanup() {
-      clearTimeout(timeout);
-      // A response may arrive after its script was removed on timeout.
-      window[callback] = () => {};
-      window.setTimeout(() => { delete window[callback]; }, 60_000);
-      script.remove();
-    }
-
-    function finish(error, result) {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      if (error) reject(error);
-      else resolve(result);
-    }
-
-    window[callback] = async (response) => {
-      if (settled) return;
-      clearTimeout(timeout); // Local normalization is not a network timeout.
-      if (response?.status !== "ok" || !response.table) {
-        finish(new Error(response?.errors?.[0]?.message || "시트 응답 오류"));
-        return;
-      }
-      const rawRows = response.table.rows
-        .map((row, index) => ({ values: toValues(row), rowIndex: index + 1 }))
-        .filter(({ values }) => values.some(Boolean) && !isHeaderRow(values));
-      try {
-        const normalized = await Promise.all(rawRows.map(async ({values,rowIndex}) => {
-          const record = sheet.kind === 'review' ? normalizeReviewRow(sheet,values,rowIndex) : normalizeInquiryRow(sheet,values,rowIndex);
-          if (record) record.completionKey = await completionIdentity(sheet.gid,sheet.kind,values);
-          return record;
-        }));
-        finish(null, normalized.filter(Boolean));
-      } catch (error) { finish(error); }
-    };
-
-    script.onerror = () => finish(new Error("시트 연결 실패"));
-    const query = new URLSearchParams({
-      gid: sheet.gid,
-      headers: "0",
-      range: "A:N", // Preserve source row offsets; exclude unused columns only.
-      tqx: `out:json;responseHandler:${callback}`,
-      t: String(Date.now()),
-    });
-    script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?${query}`;
-    document.head.append(script);
-  });
+// The CSV export returns every cell as displayed, at its real row position.
+// The Visualization JSON guesses one type per column and drops cells of another type:
+// a text ID in a numeric column came back empty, so its completion fingerprint never matched the sheet.
+async function loadSheetAttempt(sheet) {
+  const query = new URLSearchParams({ format: "csv", gid: sheet.gid, range: "A:N" }); // Exclude unused columns only.
+  let text;
+  try {
+    const response = await fetch(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?${query}`, { credentials: "omit", cache: "no-store", signal: AbortSignal.timeout(30_000) });
+    if (!response.ok || !/text\/csv/i.test(response.headers.get("content-type") || "")) throw new Error("시트 응답 오류");
+    text = await response.text();
+  } catch (error) {
+    if (error.message === "시트 응답 오류") throw error;
+    throw new Error(error.name === "TimeoutError" || error.name === "AbortError" ? "응답 시간 초과" : "시트 연결 실패");
+  }
+  const rawRows = parseCsv(text)
+    .map((row, index) => ({ values: toValues(row), rowIndex: index + 1 }))
+    .filter(({ values }) => values.some(Boolean) && !isHeaderRow(values));
+  const normalized = await Promise.all(rawRows.map(async ({values,rowIndex}) => {
+    const record = sheet.kind === 'review' ? normalizeReviewRow(sheet,values,rowIndex) : normalizeInquiryRow(sheet,values,rowIndex);
+    if (record) record.completionKey = await completionIdentity(sheet.gid,sheet.kind,values);
+    return record;
+  }));
+  return normalized.filter(Boolean);
 }
 
 async function loadSheet(sheet) {
