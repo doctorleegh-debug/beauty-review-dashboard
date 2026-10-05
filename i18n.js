@@ -16,6 +16,7 @@ const TRANSLATIONS = {
   '시트 저장 확인 중…': ['Confirming sheet save…','正在确认表格保存…','シートへの保存を確認中…'],
   '시트 저장 완료 — 다른 담당자 화면에도 갱신 시 반영됩니다.': ['Saved to the sheet — others will see it on refresh.','已保存到表格，其他负责人刷新后即可看到。','シートに保存しました。他の担当者にも更新時に反映されます。'],
   '다른 담당자가 먼저 변경했습니다. 최신 상태를 확인해 주세요.': ['Another staff member changed this first. Please review the latest state.','其他负责人已先修改，请查看最新状态。','他の担当者が先に変更しました。最新の状態を確認してください。'],
+  '시트 원문이 바뀌어 목록을 새로 불러왔습니다. 해당 기록을 다시 확인해 주세요.': ['The sheet row changed, so the list was reloaded. Please check this record again.','表格原文已变更，列表已重新加载。请再次确认该记录。','シートの原文が変更されたため、一覧を再読み込みしました。該当の記録をもう一度確認してください。'],
   '저장 결과를 확인하지 못했습니다. 새로고침 후 처리상태를 확인해 주세요.': ['Save could not be confirmed. Refresh and check the status.','无法确认保存结果。请刷新并检查处理状态。','保存結果を確認できませんでした。更新して状態を確認してください。'],
   '통계는 원본 답글 기록 기준입니다. 담당자 처리완료 체크는 답글 게시 수에 포함되지 않습니다.': ['Analytics use original reply records. Staff completion checks do not count as published replies.','统计基于原始回复记录。负责人完成勾选不计入已发布回复数。','統計は元の返信記録に基づきます。担当者の完了チェックは公開返信数に含めません。'],
   '업무 바로가기': ['Work shortcuts', '工作快捷入口', '業務ショートカット'],

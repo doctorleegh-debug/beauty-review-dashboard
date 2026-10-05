@@ -70,6 +70,29 @@ function renderCompletionNotice() {
   if (undoButton) undoButton.disabled = completionStore.saving || completionUndoStack.length === 0;
 }
 
+// Errors that say nothing about the record itself: the same change can simply be sent again.
+const COMPLETION_TRANSIENT = ['BUSY','RATE_LIMIT','STORAGE_UNAVAILABLE','NETWORK','TIMEOUT','UNCONFIRMED'];
+
+// One write plus its receipt. Throws the server's error code.
+async function writeCompletion(record,done) {
+  const requestId = crypto.randomUUID();
+  const payload = {action:'setCompletion',key:record.completionKey,gid:record.sourceGid,row:record.rowIndex,done,revision:completionStore.states[record.completionKey]?.revision || 0,requestId};
+  // Opaque response is NOT success. A subsequent read must confirm the exact request.
+  try { await fetch(COMPLETION_ENDPOINT,{method:'POST',mode:'no-cors',credentials:'omit',headers:{'Content-Type':'text/plain;charset=UTF-8'},body:JSON.stringify(payload),signal:AbortSignal.timeout(25000)}); }
+  catch (_) { throw new Error('NETWORK'); }
+  for (let attempt=0; attempt<4; attempt++) {
+    const result = await completionRead(requestId);
+    if (result.receipt) {
+      if (!result.receipt.ok) throw new Error(result.receipt.error);
+      if (result.receipt.key !== payload.key || result.receipt.done !== done) throw new Error('MISMATCH');
+      completionStore.states = result.states;
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve,1000));
+  }
+  throw new Error('UNCONFIRMED');
+}
+
 async function saveCompletion(record,done,options = {}) {
   if (completionStore.saving) return;
   completionStore.saving = true;
@@ -88,36 +111,40 @@ async function saveCompletion(record,done,options = {}) {
     const previousDone = isResolved(record);
     const currentRevision = completionStore.states[record.completionKey]?.revision || 0;
     if (options.expectedRevision !== undefined && currentRevision !== options.expectedRevision) throw new Error('CONFLICT');
-    const requestId = crypto.randomUUID();
-    const payload = {action:'setCompletion',key:record.completionKey,gid:record.sourceGid,row:record.rowIndex,done,revision:currentRevision,requestId};
-    // Opaque response is NOT success. A subsequent read must confirm the exact request.
-    await fetch(COMPLETION_ENDPOINT,{method:'POST',mode:'no-cors',credentials:'omit',headers:{'Content-Type':'text/plain;charset=UTF-8'},body:JSON.stringify(payload),signal:AbortSignal.timeout(25000)});
-    let confirmed = false;
-    for (let attempt=0; attempt<4; attempt++) {
-      const result = await completionRead(requestId);
-      if (result.receipt) {
-        if (!result.receipt.ok) throw new Error(result.receipt.error);
-        if (result.receipt.key !== payload.key || result.receipt.done !== done) throw new Error('MISMATCH');
-        completionStore.states = result.states;
-        confirmed = true;
-        break;
+    // Checking the box must end with the card gone: refresh whatever went stale on this page and send again.
+    // Undo keeps its strict single attempt so it never overrides another staff member's change.
+    let written = false;
+    for (let attempt=1; !written; attempt++) {
+      try { await writeCompletion(record,done); written = true; }
+      catch (error) {
+        if (options.undo || attempt >= 3) throw error;
+        if (error.message === 'SOURCE_CHANGED') {
+          // The sheet row no longer matches what this page loaded: read the tab again and use its current fingerprint.
+          const fresh = await reloadSourceRecord(record);
+          if (!fresh || fresh.completionKey === record.completionKey) throw error;
+          record = fresh;
+          completionStore.pendingKey = record.completionKey;
+        } else if (error.message === 'CONFLICT' || COMPLETION_TRANSIENT.includes(error.message)) {
+          if (error.message !== 'CONFLICT') await new Promise(resolve => setTimeout(resolve,1500));
+          await loadCompletionState();
+          if (!completionStore.ready) throw error;
+          if (isResolved(record) === done) break; // Already in the requested state (this request landed, or another staff member did it).
+        } else throw error;
       }
-      await new Promise(resolve => setTimeout(resolve,1000));
     }
-    if (!confirmed) throw new Error('UNCONFIRMED');
     if (options.undo) {
       completionUndoStack.pop();
       // Consecutive changes to the same item can also be undone safely.
       const earlier = completionUndoStack.findLast(action => action.record.completionKey === record.completionKey);
       if (earlier) earlier.revision = completionStore.states[record.completionKey].revision;
-    } else if (previousDone !== done) {
+    } else if (written && previousDone !== done) {
       completionUndoStack.push({record:{...record},previousDone,revision:completionStore.states[record.completionKey].revision});
       if (completionUndoStack.length > 20) completionUndoStack.shift();
     }
     completionStore.message = options.undo ? '마지막 처리를 되돌렸습니다. 시트에도 반영되었습니다.' : '시트 저장 완료 — 다른 담당자 화면에도 갱신 시 반영됩니다.';
   } catch (error) {
     await loadCompletionState();
-    completionStore.message = error.message === 'CONFLICT' ? '다른 담당자가 먼저 변경했습니다. 최신 상태를 확인해 주세요.' : '저장 결과를 확인하지 못했습니다. 새로고침 후 처리상태를 확인해 주세요.';
+    completionStore.message = error.message === 'CONFLICT' ? '다른 담당자가 먼저 변경했습니다. 최신 상태를 확인해 주세요.' : error.message === 'SOURCE_CHANGED' ? '시트 원문이 바뀌어 목록을 새로 불러왔습니다. 해당 기록을 다시 확인해 주세요.' : '저장 결과를 확인하지 못했습니다. 새로고침 후 처리상태를 확인해 주세요.';
   } finally { completionStore.saving = false; completionStore.pendingKey = null; render(); }
 }
 

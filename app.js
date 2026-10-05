@@ -261,6 +261,14 @@ async function loadSheet(sheet) {
   }
 }
 
+// Re-read one tab after the completion server reported that a row no longer matches what this page loaded.
+async function reloadSourceRecord(record) {
+  const sheet = SHEETS.find((item) => item.gid === record.sourceGid);
+  const fresh = await loadSheet(sheet);
+  state.allRecords = deduplicateRecords([...fresh, ...state.allRecords.filter((item) => item.sourceGid !== sheet.gid)]);
+  return state.allRecords.find((item) => item.key === record.key) || null;
+}
+
 async function loadSheets() {
   const results = new Array(SHEETS.length);
   let next = 0;
@@ -394,7 +402,9 @@ function render() {
   elements.completed.textContent = formatNumber(counts.completed);
   elements.completedNote.textContent = t("완료율 {rate}%", {rate: completionRate});
   elements.hold.textContent = formatNumber(records.filter(r => r.status === 'hold' && !isResolved(r)).length);
-  elements.pending.textContent = formatNumber(records.filter(r => r.status === 'pending' && !isResolved(r)).length);
+  const pending = records.filter(r => r.status === 'pending' && !isResolved(r));
+  elements.pending.textContent = formatNumber(pending.length);
+  renderPendingLink(pending);
   elements.analyticsPeriod.textContent = t("{period} 기준", {period: periodLabel()});
 
   renderCompletionNotice();
@@ -482,6 +492,27 @@ function staffReason(record) {
 
 function sheetRowUrl(record) {
   return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit#gid=${record.sourceGid}&range=A${record.rowIndex}:N${record.rowIndex}`;
+}
+
+// The "확인 필요" card is a link while it counts something: it opens the newest such record at its sheet row.
+let pendingRecords = [];
+function renderPendingLink(pending) {
+  pendingRecords = pending; // Already sorted newest first.
+  const card = elements.pending.closest(".kpi-card");
+  card.classList.toggle("is-link", pending.length > 0);
+  if (pending.length) { card.tabIndex = 0; card.setAttribute("role", "link"); card.title = t("시트 기록 열기"); }
+  else { card.removeAttribute("tabindex"); card.removeAttribute("role"); card.removeAttribute("title"); }
+}
+
+function openPendingRecord() {
+  if (!pendingRecords.length) return;
+  window.open(sheetRowUrl(pendingRecords[0]), "_blank", "noopener");
+  if (pendingRecords.length > 1) {
+    // Several records: the sheet opens at the newest one and the list below shows them all.
+    elements.statusFilter.value = "pending";
+    state.status = "pending";
+    render();
+  }
 }
 
 function recordActions(record) {
@@ -657,6 +688,13 @@ elements.platformFilter.addEventListener("change", () => { state.platform = elem
 elements.statusFilter.addEventListener("change", () => { state.status = elements.statusFilter.value; render(); });
 elements.searchInput.addEventListener("input", () => { state.search = elements.searchInput.value.trim(); render(); });
 elements.refreshButton.addEventListener("click", refreshData);
+const pendingCard = elements.pending.closest(".kpi-card");
+pendingCard.addEventListener("click", openPendingRecord);
+pendingCard.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  openPendingRecord();
+});
 
 const themeButton = document.querySelector("#theme-toggle");
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
