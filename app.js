@@ -5,13 +5,26 @@ let refreshButtonTimer;
 let lastRefreshAt = null;
 let lastLoadedCount = 0;
 
+// 탭별 열 위치(0부터). 문의 탭은 머리글 행의 열 이름으로 위치를 찾고, 머리글이 없거나 알아볼 수 없으면 탭의 기본 구조를 쓴다.
+// 처리완료 서버(Apps Script)가 지문에 쓰는 역할(번호·본문·작성자·시술)을 그대로 따르므로, 열 순서가 바뀌어도 기존 처리완료가 이어진다.
+const REVIEW_COLUMNS = { date: 0, id: 3, author: 4, rating: 5, procedure: 7, body: 8, reply: 9, status: 10, processedAt: 11, notes: 12, extra: 13 };
+const INQUIRY_LOG_COLUMNS = { checkedAt: 0, state: 1, lookup: 2, id: 3, inquiredAt: 4, author: 5, procedure: 6, body: 7, reply: 8, status: 9, processedAt: 10, notes: 11, holdReply: 13 };
+const INQUIRY_COMPACT_COLUMNS = { inquiredAt: 0, id: 1, author: 2, procedure: 3, body: 4, reply: 5, status: 6, processedAt: 7, holdReply: 8 };
+const INQUIRY_HEADER_FIELDS = [
+  ["checkedAt", /^점검일시$/], ["state", /^상태$/], ["lookup", /^조회 결과$/],
+  ["id", /^문의 (?:NO\/ID|번호)$/], ["inquiredAt", /^문의 등록일시$/], ["author", /^작성자$/],
+  ["procedure", /^이벤트\/시술$/], ["body", /^고객 문의$/], ["reply", /^게시 답변$/],
+  ["status", /^처리 상태$/], ["processedAt", /^답변 처리일시$/], ["notes", /^비고$/],
+  ["holdReply", /^(?:보류판정 )?담당자 답글(?:\(보류 건\))?$/],
+];
+
 const SHEETS = [
-  { name: "강남언니", gid: "0", kind: "review", url: "https://partner.gangnamunni.com/review" },
-  { name: "바비톡", gid: "1136387058", kind: "review", url: "https://client.babitalk.com/review" },
-  { name: "여신티켓", gid: "1871126246", kind: "review", url: "https://plus.yeoshin.co.kr/customerManagement/reviewHistory" },
-  { name: "카카오리뷰", gid: "645159251", kind: "review", url: "https://business.kakao.com/space/1027344/mystore/819519/review" },
-  { name: "여신티켓 시술문의", gid: "346527032", kind: "inquiry", url: "https://plus.yeoshin.co.kr/customerManagement/inquiryHistory" },
-  { name: "강남언니 Q&A", gid: "1011610355", kind: "inquiry", url: "https://partner.gangnamunni.com/service-offer/qna" },
+  { name: "강남언니", gid: "0", kind: "review", columns: REVIEW_COLUMNS, url: "https://partner.gangnamunni.com/review" },
+  { name: "바비톡", gid: "1136387058", kind: "review", columns: REVIEW_COLUMNS, url: "https://client.babitalk.com/review" },
+  { name: "여신티켓", gid: "1871126246", kind: "review", columns: REVIEW_COLUMNS, url: "https://plus.yeoshin.co.kr/customerManagement/reviewHistory" },
+  { name: "카카오리뷰", gid: "645159251", kind: "review", columns: REVIEW_COLUMNS, url: "https://business.kakao.com/space/1027344/mystore/819519/review" },
+  { name: "여신티켓 시술문의", gid: "346527032", kind: "inquiry", columns: INQUIRY_COMPACT_COLUMNS, url: "https://plus.yeoshin.co.kr/customerManagement/inquiryHistory" },
+  { name: "강남언니 Q&A", gid: "1011610355", kind: "inquiry", columns: INQUIRY_LOG_COLUMNS, url: "https://partner.gangnamunni.com/service-offer/qna" },
 ];
 
 const state = {
@@ -83,7 +96,9 @@ function parseCsv(text) {
 
 function isHeaderRow(values) {
   const text = values.join(" ");
-  return /점검일시/.test(text) && /처리 상태/.test(text);
+  if (/점검일시/.test(text) && /처리 상태/.test(text)) return true;
+  // 문의 탭의 새 머리글: "문의 번호"와 "처리 상태"가 각각 한 칸을 차지하는 행
+  return values.includes("처리 상태") && values.some((cell) => /^문의 (?:NO\/ID|번호)$/.test(cell));
 }
 
 function redactText(value, author = "") {
@@ -185,17 +200,18 @@ function normalizeReviewRow(sheet, values, rowIndex) {
   };
 }
 
-function normalizeInquiryRow(sheet, values, rowIndex) {
-  const author = values[5];
-  const checkedAt = normalizeDateText(values[0]);
-  const inquiryAt = normalizeDateText(values[4]);
-  const processedAt = normalizeDateText(values[10]);
-  const body = redactText(values[7], author);
-  const reply = redactText(values[8] || values[13], author);
-  const id = values[3];
-  const notes = redactText(values[11]);
+function normalizeInquiryRow(sheet, values, rowIndex, columns = sheet.columns) {
+  const cell = (field) => values[columns[field]] || "";
+  const author = cell("author");
+  const checkedAt = normalizeDateText(cell("checkedAt"));
+  const inquiryAt = normalizeDateText(cell("inquiredAt"));
+  const processedAt = normalizeDateText(cell("processedAt"));
+  const body = redactText(cell("body"), author);
+  const reply = redactText(cell("reply") || cell("holdReply"), author);
+  const id = cell("id");
+  const notes = redactText(cell("notes"));
   if ((!id || /문의 NO\/ID/i.test(id)) && !body) return null;
-  const status = reviewStatus(values[9], reply, notes, values[1]);
+  const status = reviewStatus(cell("status"), reply, notes, cell("state"));
   const dateText = firstDateText(inquiryAt, checkedAt, processedAt);
   return {
     key: `${sheet.gid}:${id || `${rowIndex}:${body.slice(0, 32)}`}`,
@@ -204,14 +220,14 @@ function normalizeInquiryRow(sheet, values, rowIndex) {
     id: id || "번호 미표시",
     dateText,
     date: parseDate(dateText),
-    procedure: redactText(values[6]),
+    procedure: redactText(cell("procedure")),
     body,
     reply,
     status,
-    author: replyAuthor(status, `${values[9]} ${values[1]}`, notes, reply),
+    author: replyAuthor(status, `${cell("status")} ${cell("state")}`, notes, reply),
     rating: null,
-    statusRaw: redactText(values[9] || values[1]) || (status === "completed" ? "답변 완료" : status === "hold" ? "보류" : "확인 필요"),
-    reason: notes || redactText(values[1]) || redactText(values[2]),
+    statusRaw: redactText(cell("status") || cell("state")) || (status === "completed" ? "답변 완료" : status === "hold" ? "보류" : "확인 필요"),
+    reason: notes || redactText(cell("state")) || redactText(cell("lookup")),
     sourceGid: sheet.gid,
     rowIndex,
   };
@@ -224,6 +240,20 @@ function deduplicateRecords(records) {
     if (!existing || (record.date?.getTime() || 0) >= (existing.date?.getTime() || 0)) map.set(record.key, record);
   }
   return [...map.values()];
+}
+
+// Inquiry tabs name their columns in a header row. Use those names so a reorganised tab keeps working;
+// fall back to the tab's built-in layout when there is no header row or it cannot be recognised.
+function columnsFor(sheet, rows) {
+  if (sheet.kind !== "inquiry") return sheet.columns;
+  const header = rows.find(({ values }) => isHeaderRow(values));
+  if (!header) return sheet.columns;
+  const found = {};
+  header.values.forEach((label, index) => {
+    const match = INQUIRY_HEADER_FIELDS.find(([, pattern]) => pattern.test(label));
+    if (match && found[match[0]] === undefined) found[match[0]] = index;
+  });
+  return ["id", "body", "status"].every((field) => found[field] !== undefined) ? found : sheet.columns;
 }
 
 // The CSV export returns every cell as displayed, at its real row position.
@@ -240,12 +270,12 @@ async function loadSheetAttempt(sheet) {
     if (error.message === "시트 응답 오류") throw error;
     throw new Error(error.name === "TimeoutError" || error.name === "AbortError" ? "응답 시간 초과" : "시트 연결 실패");
   }
-  const rawRows = parseCsv(text)
-    .map((row, index) => ({ values: toValues(row), rowIndex: index + 1 }))
-    .filter(({ values }) => values.some(Boolean) && !isHeaderRow(values));
+  const parsedRows = parseCsv(text).map((row, index) => ({ values: toValues(row), rowIndex: index + 1 }));
+  const columns = columnsFor(sheet, parsedRows);
+  const rawRows = parsedRows.filter(({ values }) => values.some(Boolean) && !isHeaderRow(values));
   const normalized = await Promise.all(rawRows.map(async ({values,rowIndex}) => {
-    const record = sheet.kind === 'review' ? normalizeReviewRow(sheet,values,rowIndex) : normalizeInquiryRow(sheet,values,rowIndex);
-    if (record) record.completionKey = await completionIdentity(sheet.gid,sheet.kind,values);
+    const record = sheet.kind === 'review' ? normalizeReviewRow(sheet,values,rowIndex) : normalizeInquiryRow(sheet,values,rowIndex,columns);
+    if (record) record.completionKey = await completionIdentity(sheet.gid,columns,values);
     return record;
   }));
   return normalized.filter(Boolean);

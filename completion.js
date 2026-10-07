@@ -4,8 +4,9 @@ const completionStore = { states:{}, ready:false, saving:false, message:'', pend
 // This tab's confirmed actions only; never undo another staff member's change.
 const completionUndoStack = [];
 
-async function completionIdentity(gid, kind, values) {
-  const indexes = kind === 'inquiry' ? [3,7,5,6] : [3,8,4,7];
+async function completionIdentity(gid, columns, values) {
+  // The four roles the completion server fingerprints (number, body, author, procedure), wherever this tab keeps them.
+  const indexes = [columns.id, columns.body, columns.author, columns.procedure];
   const raw = JSON.stringify([String(gid), ...indexes.map(i => String(values[i] || '').trim())]);
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
   return Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2,'0')).join('');
